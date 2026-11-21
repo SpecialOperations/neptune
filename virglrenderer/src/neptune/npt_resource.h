@@ -20,8 +20,9 @@ struct npt_resource;
 
 /* Hard cap on per-call payload byte_size.  Bounded so the byte_size+7
  * alignment math can't wrap to 0 on a hostile value and read stale
- * bytes. */
-#define NPT_MAX_RESOURCE_UPDATE_BYTES (64u << 20)
+ * bytes, while still accommodating large single-subresource uploads
+ * (e.g. uncompressed/large Unity texture & buffer updates > 64 MiB). */
+#define NPT_MAX_RESOURCE_UPDATE_BYTES (512u << 20)
 
 /* RESOURCE_UPDATE.  `payload` points at the contiguous source bytes in
  * the decoder's stream; lifetime is the caller's responsibility. */
