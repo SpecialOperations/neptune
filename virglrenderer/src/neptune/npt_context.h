@@ -147,6 +147,9 @@ struct npt_context {
    mtx_t pending_blob_mutex;
    struct hash_table *pending_blob_table;  /* blob_id -> npt_pending_blob */
 
+   /* Same-process cross-device D3D11 shared texture token table (macOS). */
+   struct npt_shared_handle_table *shared_handles;
+
    /* Shmem-imported D3D12 heaps: heap guest id -> backing SHM
     * npt_resource, consulted on COM_RELEASE to drop that resource's
     * import pin. */

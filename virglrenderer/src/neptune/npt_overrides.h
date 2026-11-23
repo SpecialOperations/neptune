@@ -12,14 +12,18 @@
  * pointers.  Initialised once at startup, read-only thereafter. */
 extern struct npt_dispatch_toplevel_overrides npt_toplevel_overrides;
 
-/* Shared-HANDLE rejection.  Each table sets only the shared-HANDLE
- * methods; default dispatch handles the rest. */
+/* Shared-HANDLE policy + same-process cross-device D3D11 sharing (macOS). */
 extern struct npt_dispatch_idxgiresource_overrides npt_idxgiresource_overrides;
 extern struct npt_dispatch_idxgiresource1_overrides npt_idxgiresource1_overrides;
+extern struct npt_dispatch_idxgikeyedmutex_overrides npt_idxgikeyedmutex_overrides;
 extern struct npt_dispatch_id3d11device_overrides npt_id3d11device_overrides;
 extern struct npt_dispatch_id3d11device1_overrides npt_id3d11device1_overrides;
+extern struct npt_dispatch_id3d11device3_overrides npt_id3d11device3_overrides;
 extern struct npt_dispatch_id3d11device5_overrides npt_id3d11device5_overrides;
 extern struct npt_dispatch_id3d11fence_overrides npt_id3d11fence_overrides;
+
+struct npt_context;
+void npt_shared_handles_fini(struct npt_context *ctx);
 
 /* ID3D12Device: the shared-HANDLE rejections plus the FEATURE_LEVELS blob
  * repack (npt_overrides_d3d12_device.c). */

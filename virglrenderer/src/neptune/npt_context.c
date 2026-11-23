@@ -139,8 +139,10 @@ npt_context_init_dispatch(struct npt_context *ctx)
    d->toplevel_dispatch_overrides = &npt_toplevel_overrides;
    d->idxgiresource_dispatch_overrides = &npt_idxgiresource_overrides;
    d->idxgiresource1_dispatch_overrides = &npt_idxgiresource1_overrides;
+   d->idxgikeyedmutex_dispatch_overrides = &npt_idxgikeyedmutex_overrides;
    d->id3d11device_dispatch_overrides = &npt_id3d11device_overrides;
    d->id3d11device1_dispatch_overrides = &npt_id3d11device1_overrides;
+   d->id3d11device3_dispatch_overrides = &npt_id3d11device3_overrides;
    d->id3d11device5_dispatch_overrides = &npt_id3d11device5_overrides;
    d->id3d11fence_dispatch_overrides = &npt_id3d11fence_overrides;
    d->id3d12device_dispatch_overrides = &npt_id3d12device_overrides;
@@ -727,6 +729,8 @@ npt_context_destroy(struct npt_context *ctx)
       npt_log("context destroyed with %u sync map(s) still active",
               ctx->sync_maps.count);
    free(ctx->sync_maps.entries);
+
+   npt_shared_handles_fini(ctx);
 
    hash_table_foreach(ctx->pending_blob_table, entry) {
       struct npt_pending_blob *pb = entry->data;
