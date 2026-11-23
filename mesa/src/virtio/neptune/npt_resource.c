@@ -208,14 +208,28 @@ npt_d3d_map_ring_fini(struct npt_d3d_map_ring *r)
 {
    if (!r->active_count)
       return;
-   struct npt_renderer *rndr = r->com->base.device->renderer;
+   struct npt_device *dev = r->com->base.device;
+   struct npt_renderer *rndr = dev->renderer;
+   const bool shutting_down = npt_device_is_shutting_down(dev);
 
-   /* No pending_seqno wait: rotate_slot is the only consumer and the
-    * ring is going away.  Host-side ordering is covered by COM_RELEASE
-    * (queued in npt_com_destroy before this fini runs). */
    for (uint32_t i = 0; i < r->active_count; i++) {
       if (r->slots[i].shmem) {
-         shmem_reaper_unref(rndr, r->slots[i].shmem);
+         if (shutting_down) {
+            shmem_reaper_unref(rndr, r->slots[i].shmem);
+         } else {
+            /* Ensure any queued UNMAP copy reading this slot has been
+             * consumed by the host ring thread before returning the byte
+             * range to map_pool for reuse. */
+            if (r->slots[i].in_flight) {
+               struct npt_ring *ring = r->slots[i].pending_ring
+                  ? r->slots[i].pending_ring
+                  : dev->ring;
+               if (ring && !npt_ring_seqno_reached(ring, r->slots[i].pending_seqno))
+                  npt_ring_wait_seqno(ring, r->slots[i].pending_seqno);
+            }
+            npt_shmem_pool_free(rndr, &dev->map_pool, r->slots[i].shmem,
+                                r->slots[i].offset, r->aligned_slot_size);
+         }
          r->slots[i].shmem = NULL;
          r->slots[i].shmem_res_id = 0;
       }

@@ -140,10 +140,10 @@ struct npt_device {
  * and latency dominates. */
 #define NPT_DC_SC_RING_BUFFER_SIZE   (16u * 1024u)
 #define NPT_DATA_SHMEM_MIN_ALLOC   (64 * 1024)
-/* Map-pool starts large enough to hold a fair working set of dynamic
- * CB / vertex-buffer Maps without immediately growing.  Doubles on
- * demand up to whatever the renderer caps us at. */
-#define NPT_MAP_POOL_INITIAL_SIZE  (16u * 1024u * 1024u)
+/* Map-pool slab size: reusable pool with coalescing free-lists and empty-slab
+ * reclamation; allocations > half a slab get their own dedicated shmem so huge
+ * staging buffers never pin small allocations or vice versa. */
+#define NPT_MAP_POOL_INITIAL_SIZE  (4u * 1024u * 1024u)
 
 struct npt_device *
 npt_device_create(void);

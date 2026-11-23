@@ -39,8 +39,10 @@ npt_ring_notify(struct npt_ring *ring);
 /* buffer_size >> NPT_RING_DIRECT_ORDER threshold. */
 #define NPT_RING_DIRECT_ORDER 4u
 
-/* Grows on demand. */
+/* Grows on demand; oversized upload shmems (> STEADY_MAX) shrink back once
+ * drained so a single huge texture burst doesn't pin 128+ MiB forever. */
 #define NPT_RING_UPLOAD_INITIAL_SIZE (1u << 20)
+#define NPT_RING_UPLOAD_STEADY_MAX   (8u << 20)
 
 /* Grows on demand. */
 #define NPT_RING_REPLY_POOL_MIN_SIZE (1u << 20)
@@ -749,6 +751,12 @@ npt_ring_seqno_status(const struct npt_ring *ring, uint32_t seqno)
    return (int32_t)(npt_ring_load_head(ring) - seqno) >= 0;
 }
 
+bool
+npt_ring_seqno_reached(const struct npt_ring *ring, uint32_t seqno)
+{
+   return ring ? npt_ring_seqno_status(ring, seqno) : true;
+}
+
 void
 npt_ring_wait_all(struct npt_ring *ring)
 {
@@ -843,10 +851,25 @@ npt_ring_upload_reserve_locked(struct npt_ring *ring, uint32_t size,
    const uint32_t aligned = (size + 7u) & ~7u;
    *out_fresh = false;
 
+   if (ring->upload_shmem &&
+       ring->upload_size > NPT_RING_UPLOAD_STEADY_MAX &&
+       aligned <= NPT_RING_UPLOAD_STEADY_MAX &&
+       (npt_ring_seqno_status(ring, ring->upload_horizon_seqno) ||
+        ring->upload_used + aligned > ring->upload_size)) {
+      /* Shrink an oversized upload shmem back to STEADY_MAX once the host has
+       * finished consuming the large burst. */
+      if (!npt_ring_seqno_status(ring, ring->upload_horizon_seqno))
+         npt_ring_wait_upload_drained_locked(ring);
+      npt_renderer_shmem_unref_async(ring->renderer, ring->upload_shmem);
+      ring->upload_shmem = NULL;
+      ring->upload_size = NPT_RING_UPLOAD_STEADY_MAX;
+      ring->upload_used = 0;
+   }
+
    if (!ring->upload_shmem || aligned > ring->upload_size) {
       if (ring->upload_shmem) {
          npt_ring_wait_upload_drained_locked(ring);
-         npt_renderer_shmem_unref(ring->renderer, ring->upload_shmem);
+         npt_renderer_shmem_unref_async(ring->renderer, ring->upload_shmem);
          ring->upload_shmem = NULL;
       }
       uint32_t new_size = ring->upload_size ? ring->upload_size

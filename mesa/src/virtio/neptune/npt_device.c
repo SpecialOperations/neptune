@@ -345,7 +345,7 @@ npt_device_create(void)
    }
 
    npt_shmem_pool_init(&dev->data_pool, NPT_DATA_SHMEM_MIN_ALLOC);
-   npt_shmem_pool_init(&dev->map_pool,  NPT_MAP_POOL_INITIAL_SIZE);
+   npt_shmem_pool_init_reusable(&dev->map_pool, NPT_MAP_POOL_INITIAL_SIZE);
 
    /* Feedback pool is brought up on first CreateQuery / CreateFence. */
    mtx_init(&dev->feedback_pool_init_mutex, mtx_plain);

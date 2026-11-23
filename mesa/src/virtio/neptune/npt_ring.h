@@ -285,6 +285,10 @@ npt_ring_submit_raw_with_payload(struct npt_ring *ring,
 void
 npt_ring_force_roundtrip(struct npt_ring *ring);
 
+/* Non-blocking check: true once host head has consumed past seqno. */
+bool
+npt_ring_seqno_reached(const struct npt_ring *ring, uint32_t seqno);
+
 /* Yield-heavy poll until head is past seqno.  Returns the relax-
  * iteration count (sync-reply path feeds it to the profiler).
  * Callers may ignore the return value. */
