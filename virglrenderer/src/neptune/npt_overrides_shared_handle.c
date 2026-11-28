@@ -41,7 +41,11 @@
 #include <string.h>
 #include <unistd.h>
 #ifdef __APPLE__
+#include <errno.h>
 #include <fcntl.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/un.h>
 #endif
 
 #include "c11/threads.h"
@@ -117,6 +121,96 @@ npt_shared_handles_fini(struct npt_context *ctx)
    ctx->shared_handles = NULL;
 }
 
+static uint32_t g_npt_shared_seq = 1;
+
+struct npt_vr_dmtx_msg {
+   uint32_t magic;       /* 'NVRD' = 0x4452564Eu */
+   uint32_t version;     /* 1 */
+   uint64_t token;
+   uint32_t width;
+   uint32_t height;
+   uint32_t dxgi_format;
+   uint32_t reserved;
+   uint64_t stride;
+   uint64_t size;
+   uint64_t offset;
+};
+
+#define NPT_VR_DMTX_MAGIC   0x4452564Eu
+#define NPT_VR_DMTX_VERSION 1u
+
+static void
+npt_vr_export_dmtx(uint64_t token, const struct npt_darwin_shared_texture *pod)
+{
+   if (!pod || pod->fd < 0)
+      return;
+
+   struct sockaddr_un addr;
+   memset(&addr, 0, sizeof(addr));
+   addr.sun_family = AF_UNIX;
+   int path_len = snprintf(addr.sun_path, sizeof(addr.sun_path),
+                           "/tmp/obelisk-vr-dmtx-%u.sock", (unsigned)getuid());
+   if (path_len <= 0 || (size_t)path_len >= sizeof(addr.sun_path))
+      return;
+
+   int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+   if (sock < 0)
+      return;
+
+   int one = 1;
+   setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+   struct timeval tv = { .tv_sec = 0, .tv_usec = 100000 };
+   setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+   if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+      close(sock);
+      return;
+   }
+
+   struct npt_vr_dmtx_msg payload;
+   memset(&payload, 0, sizeof(payload));
+   payload.magic = NPT_VR_DMTX_MAGIC;
+   payload.version = NPT_VR_DMTX_VERSION;
+   payload.token = token;
+   payload.width = pod->width;
+   payload.height = pod->height;
+   payload.dxgi_format = pod->dxgi_format;
+   payload.stride = pod->stride;
+   payload.size = pod->size;
+   payload.offset = pod->offset;
+
+   struct iovec iov = {
+      .iov_base = &payload,
+      .iov_len = sizeof(payload),
+   };
+   union {
+      char buf[CMSG_SPACE(sizeof(int))];
+      struct cmsghdr align;
+   } cmsg_u;
+   memset(&cmsg_u, 0, sizeof(cmsg_u));
+
+   struct msghdr msg;
+   memset(&msg, 0, sizeof(msg));
+   msg.msg_iov = &iov;
+   msg.msg_iovlen = 1;
+   msg.msg_control = cmsg_u.buf;
+   msg.msg_controllen = sizeof(cmsg_u.buf);
+
+   struct cmsghdr *cm = CMSG_FIRSTHDR(&msg);
+   cm->cmsg_level = SOL_SOCKET;
+   cm->cmsg_type = SCM_RIGHTS;
+   cm->cmsg_len = CMSG_LEN(sizeof(int));
+   int send_fd = pod->fd;
+   memcpy(CMSG_DATA(cm), &send_fd, sizeof(send_fd));
+
+   ssize_t sent = sendmsg(sock, &msg, 0);
+   close(sock);
+   if (sent == (ssize_t)sizeof(payload)) {
+      npt_log("shared: exported VR DMTX token=0x%" PRIx64 " (%ux%u fmt=%u stride=%" PRIu64 ")",
+              token, pod->width, pod->height, pod->dxgi_format, pod->stride);
+   }
+}
+
 static uint64_t
 npt_shared_handles_insert(struct npt_context *ctx,
                           const struct npt_darwin_shared_texture *src,
@@ -154,10 +248,14 @@ npt_shared_handles_insert(struct npt_context *ctx,
       t->cap = new_cap;
    }
 
-   uint32_t seq = t->next_seq++;
-   /* Aligned opaque tokens; NT handles stay in low space, KMT handles get high bit. */
-   uint64_t token = is_nt ? (0x00100000ull | ((uint64_t)seq << 2))
-                          : (0x40000000ull | ((uint64_t)seq << 2));
+   uint32_t seq = __atomic_fetch_add(&g_npt_shared_seq, 1u, __ATOMIC_RELAXED);
+   t->next_seq = seq + 1u;
+   /* Aligned opaque tokens unique across worker processes and contexts:
+    * NT handles stay in 0x10000000..0x3FFFFFFC, KMT handles in 0x40000000..0x7FFFFFFC. */
+   uint64_t pid_bits = ((uint64_t)((uint32_t)getpid() & 0x3FFu)) << 18;
+   uint64_t seq_bits = ((uint64_t)(seq & 0xFFFFu)) << 2;
+   uint64_t token = is_nt ? (0x10000000ull | pid_bits | seq_bits)
+                          : (0x40000000ull | pid_bits | seq_bits);
    struct npt_local_shared_entry *e = &t->entries[t->count++];
    e->token = token;
    e->desc = *src;
@@ -225,6 +323,8 @@ export_local_shared_handle(struct npt_dispatch_context *dctx,
    uint64_t token = npt_shared_handles_insert(npt_context_from_dispatch(dctx), pod, is_nt);
    if (!token)
       return NPT_E_FAIL;
+
+   npt_vr_export_dmtx(token, pod);
 
    *out_handle = (HANDLE)(uintptr_t)token;
    npt_log("shared: local %s %ux%u fmt=%u misc=0x%x -> token=0x%" PRIx64,
